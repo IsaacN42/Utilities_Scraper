@@ -1,55 +1,156 @@
-# energy monitoring system
+# Utilities_Scraper Energy Monitoring System
 
-automated energy data collection and analysis for hsv utilities and ecobee thermostats.
+Automated energy data collection & analysis for HSV Utilities and Ecobee thermostats—complete with insights, usage statistics, and Home Assistant integration.
 
-## features
-- collect electric, gas, and water usage data from hsv utilities
-- collect hvac runtime and temperature data from ecobee
-- analyze usage patterns and efficiency
-- generate insights and recommendations
-- send data to home assistant
-- create visualizations and reports
+---
 
-## setup
-1. install dependencies: `python3 setup.py`
-2. update .env with your credentials
-3. run initial data collection: `python3 hsv_scraper.py && python3 ecobee_scraper.py`
-4. run analysis: `python3 energy_analyzer.py`
+## Features
+
+- Collect electric, gas, and water usage data from HSV Utilities
+- Retrieve and analyze HVAC data from Ecobee thermostats
+- Output insights, efficiency recommendations, and cost calculations
+- Push results/alerts to Home Assistant for notification and dashboarding
+- Create system status plots and reports
+- Flexible CLI and automation via cron/systemd
+
+---
+
+## Requirements
+
+- Python 3.8+
+- Access to your HSV Utilities and Ecobee accounts
+- (Optional) A running [Home Assistant](https://www.home-assistant.io/) instance with API access
+
+---
+
+## Quick Start
+
+1. **Clone the repo**
+   ```sh
+   git clone <your-repo-url>
+   cd Utilities_Scraper
+   ```
+
+2. **Install dependencies**
+   ```sh
+   pip install -r requirements.txt
+   ```
+   Or, run the setup script for one-time initialization:
+   ```sh
+   python3 setup.py
+   ```
+
+3. **Create your `.env` file**
+   - Copy the sample:
+     ```sh
+     cp env.example .env
+     ```
+   - Fill in all necessary account credentials and customize settings as desired.  
+   - **See the comments in `env.example` for every variable, valid choices (intervals, alert thresholds, etc), and what they control.**
+
+4. **Initial data collection**
+   ```sh
+   python3 hsv_scraper.py
+   python3 ecobee_scraper.py
+   ```
+
+5. **Run an analysis**
+   ```sh
+   python3 energy_analyzer.py
+   ```
+
+6. **Review reports and plots**
+   - Reports are saved in `/reports`
+   - Visualizations appear in `/plots`
+
+---
 
 ## Environment Configuration
 
-This project uses a `.env` file to manage credentials and important runtime settings. You should copy or use the provided `.env.example` as a template. Set your values according to the following guidelines:
+Settings are managed using your `.env` file.  
+Variables control:
+- Account logins for data scraping
+- Collection intervals (e.g., HOURLY, DAILY, MONTHLY: see `env.example`)
+- Data analysis window (set `DATA_PERIOD_DAYS=-1` for all available data)
+- Home Assistant integration (API URL, access token)
+- Feature toggles and thresholds for notifications & alerts
 
-- **Account Credentials:**
-  - HSV and Ecobee usernames/passwords are required for scraping their respective portals.
+**See `env.example` for full documentation of each variable and valid choices.**
 
-- **Data Collection Intervals:**
-  - You can control how often data is collected for each utility (e.g., electric, gas, water) by setting the related interval options. Common options are `HOURLY`, `DAILY`, `MONTHLY`, and sometimes `15_MIN` (for HSV electric data). See `.env.example` for available choices. Typically, faster intervals mean more granular data, but can increase API calls.
+---
 
-- **Analysis Period:**
-  - The configurable number of days of data to analyze/collect is set in your `.env`. Adjust this if you want long-term or short-term views.
+## CLI Usage
 
-- **Home Assistant Integration:**
-  - Set your Home Assistant URL and create a long-lived access token in your HA profile under security. This enables pushing data and automation triggers directly.
+Manage all tasks via the command line:
 
-- **Feature/Notification Settings:**
-  - Various `true`/`false` toggles are available for enabling notifications, report generation, and efficiency/cost alert thresholds. Adjust according to your notification preferences and what you consider "high usage."
-
-- **Other Settings:**
-  - Visual output, such as plot images, reporting options, and further customizations, are also managed via your `.env` file.
-  
-
-For a complete list of all possible variables and descriptions of valid values, see the comments in the `.env.example` file included with this repository.
-
-## cli usage
-```bash
-python3 energy_cli.py collect    # collect data
-python3 energy_cli.py analyze    # run analysis
-python3 energy_cli.py status     # show system status
-python3 energy_cli.py stats      # quick usage stats
-python3 energy_cli.py cleanup    # clean old files
-python3 energy_cli.py full-run   # collect + analyze
+```sh
+python3 energy_cli.py collect        # Collect both HSV & Ecobee data
+python3 energy_cli.py analyze        # Run analysis and output results
+python3 energy_cli.py status         # Check data, report, and integration status
+python3 energy_cli.py stats          # Quick stats from latest data
+python3 energy_cli.py cleanup        # Remove files older than N days (default: 30)
+python3 energy_cli.py full-run       # Collect + analyze in one step
 ```
+Additional flags:
+- `--weekly` : Run/create a weekly report (for `analyze` and `full-run`)
+- `--no-ha`  : Run without Home Assistant integration
+- `--cleanup-days <n>` : Custom age (days) for cleanup
 
-## automation
-use cron or systemd to automate data collection and analysis. templates provided in setup.
+---
+
+## Automation & Integration
+
+- **Automate collection/analysis with cron or systemd:**  
+  Templates (`cron_template.txt` and `energy-monitoring.service/timer`) are provided—edit with your executable/python path and file locations.
+
+- **Home Assistant Integration:**  
+  - Use the `home_assistant_config.yaml` provided in this repo to define sensors, automations, scripts, and dashboard cards.
+  - Add it (or merge into) your HA `configuration.yaml`.
+  - Notifications will go to your Home Assistant mobile app by default, but you can change the `notify` target to any HA-supported method (see [Home Assistant Notifications](https://www.home-assistant.io/integrations/notify/)).
+
+---
+
+## Troubleshooting
+
+- Double-check `.env` formatting and values if data collection or analysis fails.
+- See logs and error messages printed to terminal, and check `/logs` or the reports for diagnostic info.
+- For API changes or authentication errors, re-generate your tokens or update your credentials.
+
+---
+
+## FAQ
+
+**Q: What do "notifications" do? Where do they go?**  
+A: Home Assistant automations will send push notifications to your mobile phone (if you use the Home Assistant companion app). Configure the target in the `home_assistant_config.yaml` `notify` service.
+
+**Q: How do I customize what “period” my data covers?**  
+A: Set `DATA_PERIOD_DAYS` in your `.env`. Use `-1` for all data, or an integer for a specific window.
+
+**Q: Can I change how often scrapers pull data?**  
+A: Yes! Edit `ELECTRIC_INTERVAL`, `GAS_INTERVAL`, and `WATER_INTERVAL` in your `.env`. Valid values are documented in `env.example`.
+
+---
+
+## Project Layout
+
+```
+Utilities_Scraper/
+  ├── README.md
+  ├── env.example
+  ├── requirements.txt
+  ├── setup.py
+  ├── energy_cli.py
+  ├── energy_analyzer.py
+  ├── hsv_scraper.py
+  ├── ecobee_scraper.py
+  ├── cron_template.txt
+  ├── energy-monitoring.service, .timer
+  ├── home_assistant_config.yaml
+  ├── data/
+  ├── logs/
+  ├── plots/
+  ├── reports/
+```
+---
+
+Let me know if you want further improvements or specific code blocks/examples shown inline!
