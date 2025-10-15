@@ -1,0 +1,11 @@
+
+# add this to your crontab (run 'crontab -e' to edit)
+# run energy analysis every 6 hours
+0 */6 * * * /usr/bin/python3 /path/to/your/energy_analyzer.py >> /path/to/your/logs/analysis.log 2>&1
+
+# run data collection every hour
+0 * * * * /usr/bin/python3 /path/to/your/hsv_scraper.py >> /path/to/your/logs/scraper.log 2>&1
+30 * * * * /usr/bin/python3 /path/to/your/ecobee_scraper.py >> /path/to/your/logs/ecobee.log 2>&1
+
+# generate weekly report every monday at 8 am
+0 8 * * 1 /usr/bin/python3 /path/to/your/energy_analyzer.py --weekly-report >> /path/to/your/logs/reports.log 2>&1
