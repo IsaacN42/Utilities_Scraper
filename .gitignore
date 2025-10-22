@@ -1,2 +1,8 @@
 .env
-.env
+.venv/
+
+data/logs/*
+data/plots/*
+data/reports/*
+data/ecobee/*
+data/utilities/*
