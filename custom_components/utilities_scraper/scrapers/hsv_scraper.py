@@ -1,8 +1,8 @@
 """HSV Utilities scraper for Home Assistant integration."""
 import asyncio
+import aiofiles
 import json
 import logging
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -14,18 +14,10 @@ _LOGGER = logging.getLogger(__name__)
 BASE_URL = "https://hsvutil.smarthub.coop"
 
 
-def convert_interval(interval: str) -> str:
-    """Convert interval to API format."""
-    if interval == "15_MIN":
-        return "FIFTEEN_MINUTE"
-    return interval
-
-
 async def test_hsv_connection(username: str, password: str) -> bool:
-    """Test HSV connection with provided credentials."""
+    """test hsv connection with provided credentials."""
     try:
         async with aiohttp.ClientSession() as session:
-            # Test login
             async with session.post(
                 f"{BASE_URL}/login",
                 data={"username": username, "password": password},
@@ -35,7 +27,6 @@ async def test_hsv_connection(username: str, password: str) -> bool:
                 if not ("/ui/" in str(response.url) or "dashboard" in str(response.url).lower()):
                     return False
                 
-            # Test OAuth token
             async with session.post(
                 f"{BASE_URL}/services/oauth/auth/v2",
                 data=f"userId={username}&password={password}",
@@ -48,16 +39,15 @@ async def test_hsv_connection(username: str, password: str) -> bool:
                 return "authorizationToken" in data
                 
     except Exception as e:
-        _LOGGER.error("HSV connection test failed: %s", e)
+        _LOGGER.error("hsv connection test failed: %s", e)
         return False
 
 
 async def create_session(username: str, password: str) -> Optional[aiohttp.ClientSession]:
-    """Create authenticated session."""
+    """create authenticated session."""
     session = aiohttp.ClientSession()
     
     try:
-        # Login
         async with session.post(
             f"{BASE_URL}/login",
             data={"username": username, "password": password},
@@ -67,9 +57,8 @@ async def create_session(username: str, password: str) -> Optional[aiohttp.Clien
             if not ("/ui/" in str(response.url) or "dashboard" in str(response.url).lower()):
                 await session.close()
                 return None
-            _LOGGER.debug("HSV login successful")
+            _LOGGER.debug("hsv login successful")
         
-        # Get OAuth token
         async with session.post(
             f"{BASE_URL}/services/oauth/auth/v2",
             data=f"userId={username}&password={password}",
@@ -86,30 +75,35 @@ async def create_session(username: str, password: str) -> Optional[aiohttp.Clien
                 return None
             
             session.headers.update({'Authorization': f'Bearer {token}'})
-            _LOGGER.debug("HSV OAuth token obtained")
+            _LOGGER.debug("hsv oauth token obtained")
             return session
             
     except Exception as e:
-        _LOGGER.error("Failed to create HSV session: %s", e)
+        _LOGGER.error("failed to create hsv session: %s", e)
         await session.close()
         return None
 
 
 async def get_account_info(session: aiohttp.ClientSession) -> Optional[dict]:
-    """Get account and service location info."""
+    """get account and service location info."""
     try:
         async with session.get(f"{BASE_URL}/services/secured/accounts") as response:
             if response.status != 200:
+                _LOGGER.error(f"failed to get accounts: status {response.status}")
                 return None
             
             accounts = await response.json()
+            if not accounts:
+                _LOGGER.error("no accounts found")
+                return None
+            
             account_number = str(accounts[0]["account"])
             
-            # Get service locations
             async with session.get(
                 f"{BASE_URL}/services/secured/accounts/{account_number}/service-locations"
             ) as response:
                 if response.status != 200:
+                    _LOGGER.error(f"failed to get service locations: status {response.status}")
                     return None
                 
                 service_locations = await response.json()
@@ -119,7 +113,7 @@ async def get_account_info(session: aiohttp.ClientSession) -> Optional[dict]:
                 }
                 
     except Exception as e:
-        _LOGGER.error("Failed to get account info: %s", e)
+        _LOGGER.error("failed to get account info: %s", e)
         return None
 
 
@@ -129,32 +123,40 @@ async def collect_usage_data(
     data_period_days: int,
     intervals: dict
 ) -> Optional[dict]:
-    """Collect usage data for all utilities."""
+    """collect usage data for all utilities."""
     try:
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=data_period_days)
+        if data_period_days == -1:
+            start_date = end_date - timedelta(days=730)
+        else:
+            start_date = end_date - timedelta(days=data_period_days)
+        
+        _LOGGER.debug(f"fetching hsv data from {start_date.date()} to {end_date.date()}")
         
         payload = {
             "accountNumber": account_info["account_number"],
             "startDate": start_date.strftime("%Y-%m-%d"),
             "endDate": end_date.strftime("%Y-%m-%d"),
             "serviceLocationIds": [loc["id"] for loc in account_info["service_locations"]],
-            "interval": "HOURLY"  # Default to hourly for simplicity
+            "interval": "HOURLY"
         }
         
-        # Poll for data
         async with session.post(
             f"{BASE_URL}/services/secured/utility-usage/poll",
             json=payload
         ) as response:
             if response.status != 200:
+                _LOGGER.error(f"failed to poll usage data: status {response.status}")
                 return None
             
             data = await response.json()
             
-            # Poll until complete
-            while data.get("status") == "IN_PROGRESS":
+            # poll until complete
+            max_retries = 30
+            retry_count = 0
+            while data.get("status") == "IN_PROGRESS" and retry_count < max_retries:
                 await asyncio.sleep(2)
+                retry_count += 1
                 async with session.post(
                     f"{BASE_URL}/services/secured/utility-usage/poll",
                     json=payload
@@ -163,15 +165,19 @@ async def collect_usage_data(
                         return None
                     data = await response.json()
             
+            if data.get("status") == "IN_PROGRESS":
+                _LOGGER.error("polling timeout after 30 retries")
+                return None
+            
             return process_usage_data(data)
             
     except Exception as e:
-        _LOGGER.error("Failed to collect usage data: %s", e)
+        _LOGGER.error("failed to collect usage data: %s", e)
         return None
 
 
 def process_usage_data(data: dict) -> dict:
-    """Process raw usage data into structured format."""
+    """process raw usage data into structured format."""
     processed = {}
     
     for service_location in data.get("serviceLocations", []):
@@ -202,7 +208,7 @@ def process_usage_data(data: dict) -> dict:
 
 
 async def save_data(data: dict, data_dir: str) -> None:
-    """Save data to JSON file in specified directory."""
+    """save data to json file in specified directory."""
     try:
         data_path = Path(data_dir)
         data_path.mkdir(parents=True, exist_ok=True)
@@ -211,13 +217,13 @@ async def save_data(data: dict, data_dir: str) -> None:
         filename = f"hsu_usage_{timestamp}.json"
         filepath = data_path / filename
         
-        with open(filepath, "w") as f:
-            json.dump(data, f, indent=2)
+        async with aiofiles.open(filepath, "w") as f:
+            await f.write(json.dumps(data, indent=2))
         
-        _LOGGER.info("HSV data saved to %s", filepath)
+        _LOGGER.info("hsv data saved to %s", filepath)
         
     except Exception as e:
-        _LOGGER.error("Failed to save HSV data: %s", e)
+        _LOGGER.error("failed to save hsv data: %s", e)
 
 
 async def collect_hsv_data(
@@ -227,7 +233,7 @@ async def collect_hsv_data(
     data_dir: str,
     intervals: Optional[dict] = None
 ) -> bool:
-    """Main function to collect HSV data."""
+    """main function to collect hsv data."""
     if intervals is None:
         intervals = {
             "ELECTRIC": "HOURLY",
@@ -236,26 +242,22 @@ async def collect_hsv_data(
         }
     
     try:
-        # Create session
         session = await create_session(username, password)
         if not session:
-            _LOGGER.error("Failed to create HSV session")
+            _LOGGER.error("failed to create hsv session")
             return False
         
         try:
-            # Get account info
             account_info = await get_account_info(session)
             if not account_info:
-                _LOGGER.error("Failed to get HSV account info")
+                _LOGGER.error("failed to get hsv account info")
                 return False
             
-            # Collect usage data
             data = await collect_usage_data(session, account_info, data_period_days, intervals)
             if not data:
-                _LOGGER.error("Failed to collect HSV usage data")
+                _LOGGER.error("failed to collect hsv usage data")
                 return False
             
-            # Save data
             await save_data(data, data_dir)
             return True
             
@@ -263,5 +265,5 @@ async def collect_hsv_data(
             await session.close()
             
     except Exception as e:
-        _LOGGER.error("HSV data collection failed: %s", e)
+        _LOGGER.error("hsv data collection failed: %s", e)
         return False

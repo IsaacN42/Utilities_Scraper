@@ -1,8 +1,10 @@
 """ecobee scraper for home assistant integration."""
 import aiohttp
+import aiofiles
 import json
 from datetime import datetime, timedelta
 import logging
+from pathlib import Path
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -162,8 +164,6 @@ class EcobeeScraper:
     
     async def save_data(self, data, data_dir):
         """save data to json file."""
-        from pathlib import Path
-        
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         data_path = Path(data_dir)
         data_path.mkdir(parents=True, exist_ok=True)
@@ -171,32 +171,30 @@ class EcobeeScraper:
         filename = f"ecobee_data_{timestamp}.json"
         filepath = data_path / filename
         
-        with open(filepath, "w") as f:
-            json.dump(data, f, indent=2)
+        async with aiofiles.open(filepath, "w") as f:
+            await f.write(json.dumps(data, indent=2))
         
         _LOGGER.info(f"ecobee data saved to {filepath}")
     
     async def async_get_data(self, data_dir=None):
         """main async data collection method."""
         try:
-            # authenticate
             await self.authenticate()
-            
-            # get thermostat
             thermostat_id = await self.get_thermostat_id()
             _LOGGER.info(f"using thermostat: {thermostat_id}")
             
-            # calculate date range
+            # fix: calculate dates correctly
             end_date = datetime.now()
-            start_date = end_date - timedelta(days=self.data_period_days)
+            if self.data_period_days == -1:
+                start_date = end_date - timedelta(days=365)
+            else:
+                start_date = end_date - timedelta(days=self.data_period_days)
             
-            # fetch data
+            _LOGGER.debug(f"fetching ecobee data from {start_date.date()} to {end_date.date()}")
+            
             raw_data = await self.get_thermostat_data(thermostat_id, start_date, end_date)
-            
-            # process
             processed_data = self.process_data(raw_data)
             
-            # save if data_dir provided
             if data_dir:
                 await self.save_data(processed_data, data_dir)
             

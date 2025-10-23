@@ -30,7 +30,9 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_HSV_PASSWORD): str,
         vol.Required(CONF_ECOBEE_USERNAME): str,
         vol.Required(CONF_ECOBEE_PASSWORD): str,
-        vol.Optional(CONF_DATA_PERIOD_DAYS, default=DEFAULT_DATA_PERIOD_DAYS): int,
+        vol.Optional(CONF_DATA_PERIOD_DAYS, default=DEFAULT_DATA_PERIOD_DAYS): vol.All(
+            int, vol.Any(-1, vol.Range(min=1))
+        ),
         vol.Optional(CONF_COLLECTION_INTERVAL, default=DEFAULT_COLLECTION_INTERVAL): int,
         vol.Optional(CONF_HA_URL): str,
         vol.Optional(CONF_HA_TOKEN): str,
@@ -63,7 +65,7 @@ class UtilitiesScraperConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
-            except Exception:  # pylint: disable=broad-except
+            except Exception:
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
 
@@ -73,18 +75,15 @@ class UtilitiesScraperConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _test_credentials(self, user_input: Dict[str, Any]) -> None:
         """Test the provided credentials."""
-        # Import here to avoid circular imports
         from .scrapers.hsv_scraper import test_hsv_connection
         from .scrapers.ecobee_scraper import test_ecobee_connection
         
-        # Test HSV connection
         hsv_username = user_input[CONF_HSV_USERNAME]
         hsv_password = user_input[CONF_HSV_PASSWORD]
         
         if not await test_hsv_connection(hsv_username, hsv_password):
             raise InvalidAuth("Invalid HSV credentials")
             
-        # Test Ecobee connection
         ecobee_username = user_input[CONF_ECOBEE_USERNAME]
         ecobee_password = user_input[CONF_ECOBEE_PASSWORD]
         

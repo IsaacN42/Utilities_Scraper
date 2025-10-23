@@ -1,4 +1,5 @@
 """Sensor platform for Utilities Scraper integration."""
+import aiofiles
 import asyncio
 import json
 import logging
@@ -102,8 +103,9 @@ class UtilitiesScraperCoordinator(DataUpdateCoordinator):
         ecobee_files = list((self.data_dir / "data" / "ecobee").glob("ecobee_data_*.json"))
         if ecobee_files:
             latest_ecobee = max(ecobee_files, key=lambda p: p.stat().st_mtime)
-            with open(latest_ecobee, 'r') as f:
-                ecobee_data = json.load(f)
+            async with aiofiles.open(latest_ecobee, 'r') as f:
+                content = await f.read()
+                ecobee_data = json.loads(content)
                 data.update(self._extract_hvac_data(ecobee_data))
         
         return data
