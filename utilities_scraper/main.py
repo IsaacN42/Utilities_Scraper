@@ -15,7 +15,7 @@ def run_data_collection():
     
     # run hsv scraper
     print("collecting hsv utility data...")
-    result = subprocess.run([sys.executable, 'hsv_scraper.py'], 
+    result = subprocess.run([sys.executable, '-m', 'utilities_scraper.scrapers.hsv_scraper'], 
                           capture_output=True, text=True, timeout=300)
     if result.returncode == 0:
         print("hsv data collection completed")
@@ -24,7 +24,7 @@ def run_data_collection():
     
     # run ecobee scraper
     print("collecting ecobee data...")
-    result = subprocess.run([sys.executable, 'ecobee_scraper.py'], 
+    result = subprocess.run([sys.executable, '-m', 'utilities_scraper.scrapers.ecobee_scraper'], 
                           capture_output=True, text=True, timeout=180)
     if result.returncode == 0:
         print("ecobee data collection completed")
@@ -48,8 +48,8 @@ def run_analysis(weekly_report=False, send_to_ha=True):
         print("running analysis without ha integration")
     
     # find data files
-    hsv_files = list(Path(".").glob("hsu_usage_*.json"))
-    ecobee_files = list(Path(".").glob("ecobee_data_*.json"))
+    hsv_files = list(Path("data/utilities").glob("hsu_usage_*.json"))
+    ecobee_files = list(Path("data/ecobee").glob("ecobee_data_*.json"))
     
     if not hsv_files:
         print("no hsv utility data found. run data collection first.")
@@ -87,7 +87,7 @@ def run_analysis(weekly_report=False, send_to_ha=True):
     
     # generate report
     report_type = "weekly" if weekly_report else "standard"
-    report_file = f"energy_report_{report_type}_{datetime.now().strftime('%Y%m%d')}.txt"
+    report_file = f"data/reports/energy_report_{report_type}_{datetime.now().strftime('%Y%m%d')}.txt"
     analyzer.generate_report(report_file)
     
     # print summary
@@ -117,8 +117,8 @@ def show_status():
     print("="*40)
     
     # check for data files
-    hsv_files = list(Path(".").glob("hsu_usage_*.json"))
-    ecobee_files = list(Path(".").glob("ecobee_data_*.json"))
+    hsv_files = list(Path("data/utilities").glob("hsu_usage_*.json"))
+    ecobee_files = list(Path("data/ecobee").glob("ecobee_data_*.json"))
     
     print(f"hsv data files: {len(hsv_files)}")
     if hsv_files:
@@ -133,11 +133,11 @@ def show_status():
         print(f"   latest: {latest.name} ({mod_time.strftime('%Y-%m-%d %H:%M:%S')})")
     
     # check reports
-    reports = list(Path(".").glob("energy_report_*.txt"))
+    reports = list(Path("data/reports").glob("energy_report_*.txt"))
     print(f"reports generated: {len(reports)}")
     
     # check plots
-    plots = list(Path("plots").glob("*.png")) if Path("plots").exists() else []
+    plots = list(Path("data/plots").glob("*.png")) if Path("data/plots").exists() else []
     print(f"plots generated: {len(plots)}")
     
     # home assistant status
@@ -152,19 +152,22 @@ def cleanup_old_files(days_old=30):
     cutoff_date = datetime.now() - timedelta(days=days_old)
     cutoff_timestamp = cutoff_date.timestamp()
     
+    # clean old data files
+    data_dirs = ["data/utilities", "data/ecobee", "data/reports"]
     file_patterns = ["hsu_usage_*.json", "ecobee_data_*.json", "energy_report_*.txt"]
     cleaned_count = 0
     
-    for pattern in file_patterns:
-        for file_path in Path(".").glob(pattern):
-            if file_path.stat().st_mtime < cutoff_timestamp:
-                file_path.unlink()
-                print(f"deleted: {file_path.name}")
-                cleaned_count += 1
+    for data_dir in data_dirs:
+        for pattern in file_patterns:
+            for file_path in Path(data_dir).glob(pattern):
+                if file_path.stat().st_mtime < cutoff_timestamp:
+                    file_path.unlink()
+                    print(f"deleted: {file_path.name}")
+                    cleaned_count += 1
     
     # clean old plots
-    if Path("plots").exists():
-        for file_path in Path("plots").glob("*.png"):
+    if Path("data/plots").exists():
+        for file_path in Path("data/plots").glob("*.png"):
             if file_path.stat().st_mtime < cutoff_timestamp:
                 file_path.unlink()
                 print(f"deleted: plots/{file_path.name}")
@@ -174,7 +177,7 @@ def cleanup_old_files(days_old=30):
 
 def quick_stats():
     # find latest hsv data
-    hsv_files = list(Path(".").glob("hsu_usage_*.json"))
+    hsv_files = list(Path("data/utilities").glob("hsu_usage_*.json"))
     if not hsv_files:
         print("no data files found")
         return

@@ -59,11 +59,11 @@ def create_cron_job():
 0 */6 * * * /usr/bin/python3 /path/to/your/energy_analyzer.py >> /path/to/your/logs/analysis.log 2>&1
 
 # run data collection every hour
-0 * * * * /usr/bin/python3 /path/to/your/hsv_scraper.py >> /path/to/your/logs/scraper.log 2>&1
-30 * * * * /usr/bin/python3 /path/to/your/ecobee_scraper.py >> /path/to/your/logs/ecobee.log 2>&1
+0 * * * * /usr/bin/python3 /path/to/your/utilities_scraper/scrapers/hsv_scraper.py >> /path/to/your/logs/scraper.log 2>&1
+30 * * * * /usr/bin/python3 /path/to/your/utilities_scraper/scrapers/ecobee_scraper.py >> /path/to/your/logs/ecobee.log 2>&1
 
 # generate weekly report every monday at 8 am
-0 8 * * 1 /usr/bin/python3 /path/to/your/energy_analyzer.py --weekly-report >> /path/to/your/logs/reports.log 2>&1
+0 8 * * 1 /usr/bin/python3 /path/to/your/utilities_scraper/main.py analyze --weekly >> /path/to/your/logs/reports.log 2>&1
 """
     
     with open('cron_template.txt', 'w', encoding='utf-8') as f:
@@ -135,8 +135,8 @@ from pathlib import Path
 def test_data_files():
     print("testing data files...")
     
-    hsv_files = list(Path(".").glob("hsu_usage_*.json"))
-    ecobee_files = list(Path(".").glob("ecobee_data_*.json"))
+    hsv_files = list(Path("data/utilities").glob("hsu_usage_*.json"))
+    ecobee_files = list(Path("data/ecobee").glob("ecobee_data_*.json"))
     
     if not hsv_files:
         print("no hsv utility data files found")

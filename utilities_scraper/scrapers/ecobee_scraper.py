@@ -2,6 +2,7 @@ import requests
 import json
 from datetime import datetime, timedelta
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -119,10 +120,16 @@ def process_data(data):
 
 def save_data(data):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # ensure data/ecobee directory exists
+    data_dir = Path("data/ecobee")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    
     filename = f"ecobee_data_{timestamp}.json"
-    with open(filename, "w") as f:
+    filepath = data_dir / filename
+    with open(filepath, "w") as f:
         json.dump(data, f, indent=2)
-    print(f"data saved to {filename}")
+    print(f"data saved to {filepath}")
 
 def print_summary(data):
     if "THERMOSTAT" in data:

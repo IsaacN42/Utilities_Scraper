@@ -50,8 +50,8 @@ Automated energy data collection & analysis for HSV Utilities and Ecobee thermos
 
 4. **Initial data collection**
    ```sh
-   python3 hsv_scraper.py
-   python3 ecobee_scraper.py
+   python3 utilities_scraper/scrapers/hsv_scraper.py
+   python3 utilities_scraper/scrapers/ecobee_scraper.py
    ```
 
 5. **Run an analysis**
@@ -84,12 +84,12 @@ Variables control:
 Manage all tasks via the command line:
 
 ```sh
-python3 energy_cli.py collect        # Collect both HSV & Ecobee data
-python3 energy_cli.py analyze        # Run analysis and output results
-python3 energy_cli.py status         # Check data, report, and integration status
-python3 energy_cli.py stats          # Quick stats from latest data
-python3 energy_cli.py cleanup        # Remove files older than N days (default: 30)
-python3 energy_cli.py full-run       # Collect + analyze in one step
+python3 utilities_scraper/main.py collect        # Collect both HSV & Ecobee data
+python3 utilities_scraper/main.py analyze        # Run analysis and output results
+python3 utilities_scraper/main.py status         # Check data, report, and integration status
+python3 utilities_scraper/main.py stats          # Quick stats from latest data
+python3 utilities_scraper/main.py cleanup        # Remove files older than N days (default: 30)
+python3 utilities_scraper/main.py full-run       # Collect + analyze in one step
 ```
 Additional flags:
 - `--weekly` : Run/create a weekly report (for `analyze` and `full-run`)
@@ -139,10 +139,15 @@ Utilities_Scraper/
   ├── env.example
   ├── requirements.txt
   ├── setup.py
-  ├── energy_cli.py
+  ├── main.py
   ├── energy_analyzer.py
-  ├── hsv_scraper.py
-  ├── ecobee_scraper.py
+  └── utilities_scraper/
+      ├── main.py
+      ├── energy_analyzer.py
+      ├── energy_cli.py
+      └── scrapers/
+          ├── hsv_scraper.py
+          └── ecobee_scraper.py
   ├── cron_template.txt
   ├── energy-monitoring.service, .timer
   ├── home_assistant_config.yaml

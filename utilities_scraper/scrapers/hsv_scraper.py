@@ -3,6 +3,7 @@ import json
 import time
 from datetime import datetime, timedelta
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -165,12 +166,18 @@ def process_usage_data(data):
     return processed
 
 def save_data(data):
-    # save data to json file
+    # save data to json file in data/utilities directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # ensure data/utilities directory exists
+    data_dir = Path("data/utilities")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    
     filename = f"hsu_usage_{timestamp}.json"
-    with open(filename, "w") as f:
+    filepath = data_dir / filename
+    with open(filepath, "w") as f:
         json.dump(data, f, indent=2)
-    print(f"data saved to {filename}")
+    print(f"data saved to {filepath}")
 
 def print_summary(data):
     # print summary of usage data

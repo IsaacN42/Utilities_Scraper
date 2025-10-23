@@ -11,6 +11,21 @@ from typing import Dict, List, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
+def convert_numpy_types(obj):
+    """Convert numpy types to native Python types for JSON serialization"""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    else:
+        return obj
+
 class EnergyDataAnalyzer:
     def __init__(self, ha_url: str = None, ha_token: str = None):
         self.ha_url = ha_url
@@ -51,7 +66,7 @@ class EnergyDataAnalyzer:
         
         df = pd.DataFrame(all_readings)
         df['hour'] = df['datetime'].dt.hour
-        df['day_of_week'] = df['datetime'].dt.day_name()
+        df['day_of_week'] = df['datetime'].dt.strftime('%A')
         df['month'] = df['datetime'].dt.month
         df['date'] = df['datetime'].dt.date
         
@@ -74,7 +89,7 @@ class EnergyDataAnalyzer:
                     'datetime': dt,
                     'thermostat_id': thermostat_id,
                     'hour': dt.hour,
-                    'day_of_week': dt.day_name(),
+                    'day_of_week': dt.strftime('%A'),
                     'month': dt.month,
                     'date': dt.date
                 }
@@ -135,9 +150,14 @@ class EnergyDataAnalyzer:
         efficiency_data = {}
         
         # runtime analysis
+        # Ecobee data has 5-minute intervals (300 seconds), and runtime values are in seconds
+        interval_seconds = 300
+        
         for col in hvac_columns:
             if col in ecobee_df.columns:
-                runtime_pct = ecobee_df[col].mean() * 100 if ecobee_df[col].notna().any() else 0
+                # compCool1, compHeat1, etc. are runtime in seconds per 5-minute interval
+                # Convert to percentage: (runtime_seconds / 300) * 100
+                runtime_pct = (ecobee_df[col].mean() / interval_seconds) * 100 if ecobee_df[col].notna().any() else 0
                 efficiency_data[f'{col}_runtime_pct'] = runtime_pct
         
         # temperature analysis
@@ -242,8 +262,8 @@ class EnergyDataAnalyzer:
                     direction = "increases" if temp_corr > 0 else "decreases"
                     self.insights.append(f"electric usage strongly {direction} with outdoor temperature")
     
-    def create_visualizations(self, hsv_df: pd.DataFrame, ecobee_df: pd.DataFrame, save_dir: str = "plots"):
-        Path(save_dir).mkdir(exist_ok=True)
+    def create_visualizations(self, hsv_df: pd.DataFrame, ecobee_df: pd.DataFrame, save_dir: str = "data/plots"):
+        Path(save_dir).mkdir(parents=True, exist_ok=True)
         plt.style.use('seaborn-v0_8')
         
         # hourly usage patterns
@@ -303,10 +323,18 @@ class EnergyDataAnalyzer:
         if not self.ha_url or not self.ha_headers:
             return False
         
-        url = f"{self.ha_url}/api/states/{entity_id}"
-        response = requests.post(url, json=data, headers=self.ha_headers)
-        response.raise_for_status()
-        return True
+        try:
+            # convert numpy types to native Python types for JSON serialization
+            data = convert_numpy_types(data)
+            
+            url = f"{self.ha_url}/api/states/{entity_id}"
+            response = requests.post(url, json=data, headers=self.ha_headers, timeout=10)
+            response.raise_for_status()
+            return True
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, 
+                requests.exceptions.RequestException) as e:
+            print(f"Warning: Could not connect to Home Assistant: {e}")
+            return False
     
     def create_ha_sensors(self, usage_patterns: Dict, hvac_efficiency: Dict):
         if not self.ha_url:
@@ -339,10 +367,19 @@ class EnergyDataAnalyzer:
             }
         
         # send all sensors to ha
+        success_count = 0
         for entity_id, data in sensors.items():
-            self.send_to_home_assistant(data, entity_id)
+            if self.send_to_home_assistant(data, entity_id):
+                success_count += 1
+        
+        if success_count > 0:
+            print(f"Successfully sent {success_count}/{len(sensors)} sensors to Home Assistant")
+        else:
+            print("Warning: Could not send any sensors to Home Assistant")
     
-    def generate_report(self, output_file: str = "energy_report.txt"):
+    def generate_report(self, output_file: str = "data/reports/energy_report.txt"):
+        # ensure reports directory exists
+        Path("data/reports").mkdir(parents=True, exist_ok=True)
         with open(output_file, 'w') as f:
             f.write("=" * 50 + "\n")
             f.write("energy usage analysis report\n")
@@ -368,8 +405,8 @@ def main():
     analyzer = EnergyDataAnalyzer(HA_URL, HA_TOKEN)
     
     # find latest data files
-    hsv_files = list(Path(".").glob("hsu_usage_*.json"))
-    ecobee_files = list(Path(".").glob("ecobee_data_*.json"))
+    hsv_files = list(Path("data/utilities").glob("hsu_usage_*.json"))
+    ecobee_files = list(Path("data/ecobee").glob("ecobee_data_*.json"))
     
     if not hsv_files:
         print("no hsv utility data files found!")
