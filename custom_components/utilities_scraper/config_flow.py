@@ -31,7 +31,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_ECOBEE_USERNAME): str,
         vol.Required(CONF_ECOBEE_PASSWORD): str,
         vol.Optional(CONF_DATA_PERIOD_DAYS, default=DEFAULT_DATA_PERIOD_DAYS): vol.All(
-            int, vol.Any(-1, vol.Range(min=1))
+            int, vol.Range(min=-1)
         ),
         vol.Optional(CONF_COLLECTION_INTERVAL, default=DEFAULT_COLLECTION_INTERVAL): int,
         vol.Optional(CONF_HA_URL): str,

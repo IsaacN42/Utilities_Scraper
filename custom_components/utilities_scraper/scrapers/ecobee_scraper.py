@@ -148,9 +148,10 @@ class EcobeeScraper:
                     "data": {}
                 }
                 
+                # store raw strings exactly like CLI - no conversion here
                 for i, column in enumerate(columns):
                     if i + 2 < len(parts):
-                        reading["data"][column] = parts[i + 2]
+                        reading["data"][column] = parts[i + 2]  # keep as string
                 
                 readings.append(reading)
             
@@ -163,18 +164,50 @@ class EcobeeScraper:
         return processed
     
     async def save_data(self, data, data_dir):
-        """save data to json file."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        """save data to json file - single file, append new readings."""
+        from pathlib import Path
+        
         data_path = Path(data_dir)
         data_path.mkdir(parents=True, exist_ok=True)
         
-        filename = f"ecobee_data_{timestamp}.json"
-        filepath = data_path / filename
+        # use single filename
+        filepath = data_path / "ecobee_data_historical.json"
         
+        # load existing
+        existing_data = {}
+        if filepath.exists():
+            async with aiofiles.open(filepath, 'r') as f:
+                content = await f.read()
+                existing_data = json.loads(content)
+        
+        # merge new readings
+        if "THERMOSTAT" in data and data["THERMOSTAT"]:
+            new_thermostat = data["THERMOSTAT"][0]
+            
+            if "THERMOSTAT" not in existing_data or not existing_data["THERMOSTAT"]:
+                existing_data = data
+            else:
+                existing_thermostat = existing_data["THERMOSTAT"][0]
+                
+                # get existing timestamps
+                existing_timestamps = {r["timestamp"] for r in existing_thermostat["readings"]}
+                
+                # add only new readings
+                for reading in new_thermostat["readings"]:
+                    if reading["timestamp"] not in existing_timestamps:
+                        existing_thermostat["readings"].append(reading)
+                
+                # sort by timestamp
+                existing_thermostat["readings"].sort(key=lambda x: x["timestamp"])
+                
+                # update count
+                existing_thermostat["totalReadings"] = len(existing_thermostat["readings"])
+        
+        # save
         async with aiofiles.open(filepath, "w") as f:
-            await f.write(json.dumps(data, indent=2))
+            await f.write(json.dumps(existing_data, indent=2))
         
-        _LOGGER.info(f"ecobee data saved to {filepath}")
+        _LOGGER.info(f"ecobee data updated: {filepath}")
     
     async def async_get_data(self, data_dir=None):
         """main async data collection method."""
@@ -186,7 +219,7 @@ class EcobeeScraper:
             # fix: calculate dates correctly
             end_date = datetime.now()
             if self.data_period_days == -1:
-                start_date = end_date - timedelta(days=365)
+                start_date = end_date - timedelta(days=30)
             else:
                 start_date = end_date - timedelta(days=self.data_period_days)
             
