@@ -27,14 +27,13 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class UtilitiesScraperCoordinator(DataUpdateCoordinator):
-    """class to manage fetching data from the api."""
-
     def __init__(self, hass: HomeAssistant, config: Dict[str, Any]) -> None:
         """initialize."""
         self.hass = hass
         self.config = config
         self.data_dir = Path(hass.config.config_dir) / "custom_components" / "utilities_scraper"
         self._first_refresh = True
+        self._last_collection = None  # add this
         
         # ensure data directories exist
         (self.data_dir / "data" / "utilities").mkdir(parents=True, exist_ok=True)
@@ -64,7 +63,7 @@ class UtilitiesScraperCoordinator(DataUpdateCoordinator):
             _LOGGER.warning(f"update failed: {err}")
             # return empty dict instead of raising
             return {}
-
+    
     async def _collect_data(self) -> None:
         """collect data from both sources."""
         from .scrapers.hsv_scraper import collect_hsv_data
@@ -74,9 +73,19 @@ class UtilitiesScraperCoordinator(DataUpdateCoordinator):
         hsv_password = self.config["hsv_password"]
         ecobee_username = self.config["ecobee_username"]
         ecobee_password = self.config["ecobee_password"]
-        data_period_days = self.config[CONF_DATA_PERIOD_DAYS]
         
-        # collect both, but don't fail if one fails
+        # on first run, get full history based on DATA_PERIOD_DAYS
+        # on subsequent runs, only get data since last collection
+        if self._last_collection is None:
+            data_period_days = self.config[CONF_DATA_PERIOD_DAYS]
+            _LOGGER.info(f"first collection - fetching {data_period_days} days of history")
+        else:
+            # calculate days since last collection
+            days_since = (datetime.now() - self._last_collection).days + 1
+            data_period_days = max(1, days_since)
+            _LOGGER.info(f"incremental collection - fetching {data_period_days} days since last run")
+        
+        # collect both
         try:
             await collect_hsv_data(
                 hsv_username, 
@@ -96,6 +105,9 @@ class UtilitiesScraperCoordinator(DataUpdateCoordinator):
             )
         except Exception as e:
             _LOGGER.warning(f"ecobee collection failed: {e}")
+        
+        # update last collection time
+        self._last_collection = datetime.now()
     
     async def _process_latest_data(self) -> Dict[str, Any]:
         """process the latest collected data."""
@@ -126,17 +138,22 @@ class UtilitiesScraperCoordinator(DataUpdateCoordinator):
         return data
 
     def _extract_usage_data(self, hsv_data: Dict[str, Any]) -> Dict[str, Any]:
-        """extract usage data from hsv json."""
+        """extract usage data from hsv json - show totals for period."""
         data = {}
         
         for utility_type, meters in hsv_data.items():
+            # calculate total for last 24 hours
+            cutoff = datetime.now() - timedelta(hours=24)
+            cutoff_ms = int(cutoff.timestamp() * 1000)
+            
             total_usage = 0
             unit = "unknown"
             
             for meter in meters:
                 unit = meter.get('unitOfMeasure', unit)
                 for reading in meter.get('readings', []):
-                    total_usage += reading.get('usage', 0)
+                    if reading.get('timestamp', 0) >= cutoff_ms:
+                        total_usage += reading.get('usage', 0)
             
             # map to sensor types
             if utility_type == "ELECTRIC":
@@ -201,7 +218,7 @@ class UtilitiesScraperCoordinator(DataUpdateCoordinator):
 
 class UtilitiesScraperSensor(SensorEntity):
     """representation of a utilities scraper sensor."""
-
+    
     def __init__(
         self,
         coordinator: UtilitiesScraperCoordinator,
@@ -217,12 +234,13 @@ class UtilitiesScraperSensor(SensorEntity):
         self._attr_unit_of_measurement = sensor_config["unit"]
         self._attr_icon = sensor_config["icon"]
         self._attr_device_class = sensor_config["device_class"]
-
+        self._attr_state_class = sensor_config.get("state_class")  # add this line
+    
     @property
     def state(self) -> Optional[float]:
         """return the state of the sensor."""
         return self.coordinator.data.get(self.sensor_type)
-
+    
     @property
     def available(self) -> bool:
         """return true if entity is available."""
@@ -236,10 +254,10 @@ async def async_setup_entry(
 ) -> None:
     """set up utilities scraper sensors from a config entry."""
     coordinator = UtilitiesScraperCoordinator(hass, config_entry.data)
-
+    
     # fetch initial data so we have data when entities are added
     await coordinator.async_config_entry_first_refresh()
-
+    
     async_add_entities(
         [
             UtilitiesScraperSensor(coordinator, sensor_type, sensor_config)

@@ -28,37 +28,43 @@ SENSOR_TYPES = {
         "name": "Electric Usage",
         "unit": "kWh",
         "icon": "mdi:lightning-bolt",
-        "device_class": "energy"
+        "device_class": "energy",
+        "state_class": "total_increasing"
     },
     "gas_usage": {
         "name": "Gas Usage", 
         "unit": "therms",
         "icon": "mdi:fire",
-        "device_class": "gas"
+        "device_class": "gas",
+        "state_class": "total_increasing"
     },
     "water_usage": {
         "name": "Water Usage",
         "unit": "gal",
         "icon": "mdi:water",
-        "device_class": "water"
+        "device_class": "water",
+        "state_class": "total_increasing"
     },
     "hvac_efficiency": {
         "name": "HVAC Efficiency",
         "unit": "%",
         "icon": "mdi:thermometer",
-        "device_class": None
+        "device_class": None,
+        "state_class": "measurement"
     },
     "compressor_runtime": {
         "name": "AC Compressor Runtime",
         "unit": "%",
         "icon": "mdi:air-conditioner",
-        "device_class": None
+        "device_class": None,
+        "state_class": "measurement"
     },
     "heat_pump_runtime": {
         "name": "Heat Pump Runtime", 
         "unit": "%",
         "icon": "mdi:heat-pump",
-        "device_class": None
+        "device_class": None,
+        "state_class": "measurement"
     }
 }
 
