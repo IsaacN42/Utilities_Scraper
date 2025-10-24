@@ -2,6 +2,17 @@
 Data Availability Library
 Determines available historical data for HSV and Ecobee APIs
 """
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports when run as module
+if __package__:
+    # Running as part of package
+    pass
+else:
+    # Running standalone
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import requests
 import json
 import time

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from .data_availability import check_hsv_availability
 
 load_dotenv()
 USERNAME = os.getenv("HSV_USERNAME")
@@ -12,10 +13,9 @@ PASSWORD = os.getenv("HSV_PASSWORD")
 DATA_PERIOD_DAYS = int(os.getenv("DATA_PERIOD_DAYS"))
 ELECTRIC_INTERVAL = os.getenv("ELECTRIC_INTERVAL", "HOURLY")
 GAS_INTERVAL = os.getenv("GAS_INTERVAL", "HOURLY") 
-WATER_INTERVAL = os.getenv("WATER_INTERVAL", "MONTHLY")
+WATER_INTERVAL = os.getenv("WATER_INTERVAL", "HOURLY")
 
 def convert_interval(interval):
-    # convert 15_MIN to api format
     if interval == "15_MIN":
         return "FIFTEEN_MINUTE"
     return interval
@@ -23,17 +23,14 @@ def convert_interval(interval):
 BASE_URL = "https://hsvutil.smarthub.coop"
 
 def create_session():
-    # create authenticated session
     session = requests.Session()
     
-    # login
     response = session.post(f"{BASE_URL}/login", data={"username": USERNAME, "password": PASSWORD}, 
                           headers={"User-Agent": "Mozilla/5.0"}, allow_redirects=True)
     if not ("/ui/" in response.url or "dashboard" in response.url.lower()):
         return None
     print("login successful")
     
-    # get oauth token
     response = session.post(f"{BASE_URL}/services/oauth/auth/v2", 
                           data=f"userId={USERNAME}&password={PASSWORD}",
                           headers={"Content-Type": "application/x-www-form-urlencoded"})
@@ -49,7 +46,6 @@ def create_session():
     return session
 
 def get_account_info(session):
-    # get account and service location info
     response = session.get(f"{BASE_URL}/services/secured/accounts", params={"user": USERNAME})
     accounts = response.json()
     
@@ -60,10 +56,17 @@ def get_account_info(session):
     
     return account_number, service_location
 
-def get_usage_data(session, account_number, service_location, start_date, end_date, time_frame="HOURLY"):
-    # get usage data for all industries
-    start_ms = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp() * 1000)
-    end_ms = int(datetime.strptime(end_date, "%Y-%m-%d").timestamp() * 1000)
+def get_usage_data(session, account_number, service_location, start_date, end_date, time_frame="HOURLY", industries=None):
+    if industries is None:
+        industries = ["WATER", "ELECTRIC", "GAS"]
+    
+    if isinstance(start_date, str):
+        start_date = datetime.strptime(start_date, "%Y-%m-%d")
+    if isinstance(end_date, str):
+        end_date = datetime.strptime(end_date, "%Y-%m-%d")
+    
+    start_ms = int(start_date.timestamp() * 1000)
+    end_ms = int(end_date.timestamp() * 1000)
     
     payload = {
         "timeFrame": time_frame,
@@ -72,7 +75,7 @@ def get_usage_data(session, account_number, service_location, start_date, end_da
         "includeDemand": False,
         "serviceLocationNumber": service_location,
         "accountNumber": account_number,
-        "industries": ["WATER", "ELECTRIC", "GAS"],
+        "industries": industries,
         "startDateTime": start_ms,
         "endDateTime": end_ms
     }
@@ -80,29 +83,29 @@ def get_usage_data(session, account_number, service_location, start_date, end_da
     response = session.post(f"{BASE_URL}/services/secured/utility-usage/poll", json=payload)
     data = response.json()
     
-    # poll until complete
     pending_shown = False
-    while data.get("status") != "COMPLETE":
+    retries = 30
+    while data.get("status") != "COMPLETE" and retries > 0:
         if not pending_shown:
-            print("data pending...")
+            print("  waiting for data...")
             pending_shown = True
         time.sleep(2)
         response = session.post(f"{BASE_URL}/services/secured/utility-usage/poll", json=payload)
         data = response.json()
+        retries -= 1
     
     return process_usage_data(data)
 
 def process_usage_data(data):
-    # process raw usage data for industries/utilities
     processed = {}
 
     for industry, industry_data in data["data"].items():
         if not industry_data:
             continue
+        
         processed[industry] = []
 
         for service_data in industry_data:
-            # handle electric/gas meter data with series
             meters_info = service_data.get("meters", [])
             series_data = service_data.get("series", [])
 
@@ -116,8 +119,8 @@ def process_usage_data(data):
                         for point in meter_series["data"]:
                             readings.append({
                                 "timestamp": point.get("x"),
-                                "datetime": datetime.fromtimestamp(point.get("x",0)/1000).isoformat(),
-                                "usage": point.get("y",0)
+                                "datetime": datetime.fromtimestamp(point.get("x", 0) / 1000).isoformat(),
+                                "usage": point.get("y", 0)
                             })
 
                     processed[industry].append({
@@ -129,47 +132,42 @@ def process_usage_data(data):
                         "readings": readings
                     })
 
-            # handle water data structure
             elif industry == "WATER":
                 readings = []
                 unit_of_measure = service_data.get("unitOfMeasure", "GAL")
                 
-                # check for hourly/daily readings
                 if "data" in service_data and isinstance(service_data["data"], list):
                     for point in service_data["data"]:
                         if isinstance(point, dict) and "x" in point and "y" in point:
                             readings.append({
                                 "timestamp": point.get("x"),
-                                "datetime": datetime.fromtimestamp(point.get("x",0)/1000).isoformat(),
-                                "usage": point.get("y",0)
+                                "datetime": datetime.fromtimestamp(point.get("x", 0) / 1000).isoformat(),
+                                "usage": point.get("y", 0)
                             })
                 
-                # check for monthly format
                 current = service_data.get("current")
                 if current and not readings:
                     readings.append({
                         "timestamp": None,
-                        "datetime": f"{current.get('month',0)}/{current.get('year',0)}",
+                        "datetime": f"{current.get('month', 0)}/{current.get('year', 0)}",
                         "usage": current.get("usage", 0)
                     })
                     unit_of_measure = current.get("unitsOfMeasure", [unit_of_measure])[0]
 
-                processed[industry].append({
-                    "meterNumber": service_data.get("serviceLocationNumber", "UNKNOWN"),
-                    "unitOfMeasure": unit_of_measure,
-                    "flowDirection": "DELIVERED",
-                    "isNetMeter": False,
-                    "totalReadings": len(readings),
-                    "readings": readings
-                })
+                if readings:
+                    processed[industry].append({
+                        "meterNumber": service_data.get("serviceLocationNumber", "UNKNOWN"),
+                        "unitOfMeasure": unit_of_measure,
+                        "flowDirection": "DELIVERED",
+                        "isNetMeter": False,
+                        "totalReadings": len(readings),
+                        "readings": readings
+                    })
 
     return processed
 
 def save_data(data):
-    # save data to json file in data/utilities directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # ensure data/utilities directory exists
     data_dir = Path("data/utilities")
     data_dir.mkdir(parents=True, exist_ok=True)
     
@@ -177,46 +175,135 @@ def save_data(data):
     filepath = data_dir / filename
     with open(filepath, "w") as f:
         json.dump(data, f, indent=2)
-    print(f"data saved to {filepath}")
+    print(f"\nData saved to {filepath}")
 
 def print_summary(data):
-    # print summary of usage data
+    print("\n" + "="*60)
+    print("HSV UTILITIES DATA SUMMARY")
+    print("="*60)
     for industry, meters in data.items():
         print(f"\n{industry}:")
+        if not meters:
+            print("  No data")
+            continue
         for meter in meters:
             total_usage = sum(r.get("usage", 0) for r in meter.get("readings", []))
             unit = meter.get("unitOfMeasure", "UNKNOWN")
             readings_count = meter.get("totalReadings", 0)
-            print(f"  meter {meter['meterNumber']}: {readings_count} readings, {total_usage:.2f} {unit}")
+            print(f"  Meter {meter['meterNumber']}: {readings_count} readings, {total_usage:.2f} {unit}")
+            
+            if readings_count > 0 and meter["readings"][0].get("datetime"):
+                first = meter["readings"][0]["datetime"]
+                last = meter["readings"][-1]["datetime"]
+                if isinstance(first, str) and len(first) > 10:
+                    print(f"    Date range: {first[:10]} to {last[:10]}")
 
 def main():
-    # main function
+    print("="*60)
+    print("HSV UTILITIES DATA SCRAPER")
+    print("="*60)
+    
     session = create_session()
     account_number, service_location = get_account_info(session)
-
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=DATA_PERIOD_DAYS)
+    
+    # Check data availability
+    print()
+    availability = check_hsv_availability(session, account_number, service_location)
+    
+    # Determine date range
+    if DATA_PERIOD_DAYS < 0:
+        # Fetch all available historical data
+        print(f"\n📅 Fetching ALL available historical data")
+        start_date = availability['data_start_date']
+        end_date = datetime.now()
+        print(f"   From: {start_date.date()}")
+        print(f"   To: {end_date.date()}")
+        print(f"   Total days: {availability['total_days_available']}")
+    else:
+        # Fetch specified number of days
+        print(f"\n📅 Fetching last {DATA_PERIOD_DAYS} days")
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=DATA_PERIOD_DAYS)
+        # Don't go before data start date
+        if start_date < availability['data_start_date']:
+            print(f"   ⚠ Requested {DATA_PERIOD_DAYS} days, but only {availability['total_days_available']} available")
+            start_date = availability['data_start_date']
+        print(f"   From: {start_date.date()}")
+        print(f"   To: {end_date.date()}")
     
     all_data = {}
     
-    # electric and gas with configurable intervals
-    intervals = {"ELECTRIC": convert_interval(ELECTRIC_INTERVAL), "GAS": convert_interval(GAS_INTERVAL)}
-    for industry in ["ELECTRIC", "GAS"]:
-        data = get_usage_data(session, account_number, service_location, 
-                            start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), intervals[industry])
-        if data and industry in data:
-            all_data[industry] = data[industry]
+    # Configure intervals for each utility
+    intervals = {
+        "ELECTRIC": convert_interval(ELECTRIC_INTERVAL), 
+        "GAS": convert_interval(GAS_INTERVAL),
+        "WATER": convert_interval(WATER_INTERVAL)
+    }
     
-    # water
-    water_start = end_date - timedelta(days=31)
-    water_data = get_usage_data(session, account_number, service_location, 
-                              water_start.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), convert_interval(WATER_INTERVAL))
-    if water_data and "WATER" in water_data:
-        all_data["WATER"] = water_data["WATER"]
+    # HSV can handle large requests (up to 360 days)
+    # So we can request all utilities together if within limits
+    days_to_fetch = (end_date - start_date).days
+    max_chunk_size = availability['max_days_per_request']
+    
+    if days_to_fetch <= max_chunk_size:
+        # Single request for each utility
+        print(f"\nFetching all utilities (within {max_chunk_size} day limit)...")
+        for industry, interval in intervals.items():
+            print(f"\n{industry} ({interval}):")
+            data = get_usage_data(
+                session, account_number, service_location,
+                start_date, end_date, interval, industries=[industry]
+            )
+            if data and industry in data:
+                all_data[industry] = data[industry]
+                print(f"  ✓ Retrieved {len(data[industry])} meters")
+    else:
+        # Need to chunk requests
+        print(f"\nFetching in chunks (need {days_to_fetch} days, max is {max_chunk_size})...")
+        
+        for industry, interval in intervals.items():
+            print(f"\n{industry} ({interval}):")
+            industry_data = []
+            
+            current_end = end_date
+            chunk_num = 1
+            total_chunks = (days_to_fetch // max_chunk_size) + 1
+            
+            while current_end > start_date:
+                current_start = max(current_end - timedelta(days=max_chunk_size - 1), start_date)
+                
+                print(f"  [Chunk {chunk_num}/{total_chunks}] {current_start.date()} to {current_end.date()}")
+                
+                chunk_data = get_usage_data(
+                    session, account_number, service_location,
+                    current_start, current_end, interval, industries=[industry]
+                )
+                
+                if chunk_data and industry in chunk_data:
+                    # Merge readings for each meter
+                    for meter in chunk_data[industry]:
+                        existing_meter = next(
+                            (m for m in industry_data if m["meterNumber"] == meter["meterNumber"]), 
+                            None
+                        )
+                        if existing_meter:
+                            # Prepend older readings
+                            existing_meter["readings"] = meter["readings"] + existing_meter["readings"]
+                            existing_meter["totalReadings"] = len(existing_meter["readings"])
+                        else:
+                            industry_data.append(meter)
+                
+                current_end = current_start - timedelta(days=1)
+                chunk_num += 1
+                time.sleep(1)
+            
+            if industry_data:
+                all_data[industry] = industry_data
+                print(f"  ✓ Total: {len(industry_data)} meters")
     
     print_summary(all_data)
-    print()
     save_data(all_data)
+    print("\n✓ HSV data collection complete")
 
 if __name__ == "__main__":
     main()
