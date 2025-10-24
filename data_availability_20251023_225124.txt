@@ -1,0 +1,13 @@
+DATA AVAILABILITY REPORT
+============================================================
+Generated: 2025-10-23 22:51:24
+
+HSV UTILITIES:
+    Max days per request: 360 days
+    Data starts: 2025-07-01
+    Total history available: 114 days (~3.8 months)
+
+ECOBEE:
+    Max days per request: 30 days
+    Data starts: 2025-07-19
+    Total history available: 96 days (~3.2 months)
