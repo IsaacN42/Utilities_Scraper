@@ -65,6 +65,13 @@ SENSOR_TYPES = {
         "icon": "mdi:heat-pump",
         "device_class": None,
         "state_class": "measurement"
+    },
+    "last_update": {
+        "name": "Last Update",
+        "unit": None,
+        "icon": "mdi:clock-outline",
+        "device_class": "timestamp",
+        "state_class": None
     }
 }
 

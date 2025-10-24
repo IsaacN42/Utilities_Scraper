@@ -49,19 +49,21 @@ class UtilitiesScraperCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> Dict[str, Any]:
         """update data via library."""
         try:
-            # skip data collection on first refresh, just read existing files
             if not self._first_refresh:
                 await self._collect_data()
             else:
                 _LOGGER.info("first refresh - reading existing data files")
                 self._first_refresh = False
             
-            # process and return latest data
-            return await self._process_latest_data()
+            data = await self._process_latest_data()
+            
+            # add last update timestamp
+            data["last_update"] = datetime.now().isoformat()
+            
+            return data
             
         except Exception as err:
             _LOGGER.warning(f"update failed: {err}")
-            # return empty dict instead of raising
             return {}
     
     async def _collect_data(self) -> None:
