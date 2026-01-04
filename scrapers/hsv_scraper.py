@@ -5,44 +5,78 @@ from datetime import datetime, timedelta
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from .data_availability import check_hsv_availability
+import urllib.parse
 
 load_dotenv()
 USERNAME = os.getenv("HSV_USERNAME")
 PASSWORD = os.getenv("HSV_PASSWORD")
-DATA_PERIOD_DAYS = int(os.getenv("DATA_PERIOD_DAYS"))
+DATA_PERIOD_DAYS = int(os.getenv("DATA_PERIOD_DAYS", "7"))
 ELECTRIC_INTERVAL = os.getenv("ELECTRIC_INTERVAL", "HOURLY")
 GAS_INTERVAL = os.getenv("GAS_INTERVAL", "HOURLY") 
-WATER_INTERVAL = os.getenv("WATER_INTERVAL", "HOURLY")
+WATER_INTERVAL = os.getenv("WATER_INTERVAL", "MONTHLY")
+
+BASE_URL = "https://hsvutil.smarthub.coop"
+TOKEN_FILE = "hsv_token.json"
 
 def convert_interval(interval):
     if interval == "15_MIN":
         return "FIFTEEN_MINUTE"
     return interval
 
-BASE_URL = "https://hsvutil.smarthub.coop"
+def save_token(token_data):
+    with open(TOKEN_FILE, 'w') as f:
+        json.dump({
+            'token': token_data['authorizationToken'],
+            'expiration': token_data['expiration'],
+            'timestamp': datetime.now().isoformat()
+        }, f)
+
+def load_token():
+    if os.path.exists(TOKEN_FILE):
+        with open(TOKEN_FILE, 'r') as f:
+            data = json.load(f)
+            exp = datetime.fromtimestamp(data['expiration'] / 1000)
+            if exp > datetime.now():
+                return data['token']
+    return None
 
 def create_session():
     session = requests.Session()
     
+    # try existing token
+    token = load_token()
+    if token:
+        session.headers.update({'Authorization': f'Bearer {token}'})
+        try:
+            response = session.get(f"{BASE_URL}/services/secured/accounts", params={"user": USERNAME})
+            if response.status_code == 200:
+                print("using cached token")
+                return session
+        except:
+            pass
+    
+    # fresh login
     response = session.post(f"{BASE_URL}/login", data={"username": USERNAME, "password": PASSWORD}, 
                           headers={"User-Agent": "Mozilla/5.0"}, allow_redirects=True)
+    
     if not ("/ui/" in response.url or "dashboard" in response.url.lower()):
         return None
-    print("login successful")
     
     response = session.post(f"{BASE_URL}/services/oauth/auth/v2", 
-                          data=f"userId={USERNAME}&password={PASSWORD}",
+                          data=f"userId={urllib.parse.quote(USERNAME)}&password={urllib.parse.quote(PASSWORD)}",
                           headers={"Content-Type": "application/x-www-form-urlencoded"})
+    
     if response.status_code != 200:
         return None
     
-    token = response.json().get("authorizationToken")
+    token_data = response.json()
+    token = token_data.get("authorizationToken")
     if not token:
         return None
     
+    save_token(token_data)
     session.headers.update({'Authorization': f'Bearer {token}'})
-    print("oauth token obtained")
+    print("login successful")
     return session
 
 def get_account_info(session):
@@ -51,10 +85,43 @@ def get_account_info(session):
     
     account_number = str(accounts[0]["account"])
     service_location = str(accounts[0]["serviceLocations"][0])
-    print(f"detected account: {account_number}")
-    print(f"detected service location: {service_location}")
+    print(f"account: {account_number}, service location: {service_location}")
     
     return account_number, service_location
+
+def check_data_availability(session, account_number, service_location):
+    print("\nchecking data availability...")
+    
+    end_date = datetime.now()
+    test_periods = [30, 90, 180, 365, 540]
+    earliest_with_data = None
+    
+    for days in test_periods:
+        test_start = end_date - timedelta(days=days)
+        test_end = min(test_start + timedelta(days=30), end_date)
+        
+        try:
+            data = get_usage_data(session, account_number, service_location,
+                                test_start, test_end, "DAILY", ["ELECTRIC"])
+            
+            if data and "ELECTRIC" in data and data["ELECTRIC"]:
+                meter = data["ELECTRIC"][0]
+                if meter.get("totalReadings", 0) > 5:
+                    earliest_with_data = test_start
+                    print(f"  data found at {test_start.date()} ({days} days)")
+        except:
+            pass
+        
+        time.sleep(0.3)
+    
+    if earliest_with_data:
+        days_available = (end_date - earliest_with_data).days
+        print(f"earliest data: {earliest_with_data.date()}")
+        print(f"total days available: {days_available}")
+        return earliest_with_data, days_available
+    
+    print("no historical data found, defaulting to 30 days")
+    return end_date - timedelta(days=30), 30
 
 def get_usage_data(session, account_number, service_location, start_date, end_date, time_frame="HOURLY", industries=None):
     if industries is None:
@@ -83,12 +150,8 @@ def get_usage_data(session, account_number, service_location, start_date, end_da
     response = session.post(f"{BASE_URL}/services/secured/utility-usage/poll", json=payload)
     data = response.json()
     
-    pending_shown = False
     retries = 30
     while data.get("status") != "COMPLETE" and retries > 0:
-        if not pending_shown:
-            print("  waiting for data...")
-            pending_shown = True
         time.sleep(2)
         response = session.post(f"{BASE_URL}/services/secured/utility-usage/poll", json=payload)
         data = response.json()
@@ -167,99 +230,97 @@ def process_usage_data(data):
     return processed
 
 def save_data(data):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     data_dir = Path("data/utilities")
     data_dir.mkdir(parents=True, exist_ok=True)
     
-    filename = f"hsu_usage_{timestamp}.json"
-    filepath = data_dir / filename
-    with open(filepath, "w") as f:
+    # save as current file for incremental updates
+    current_file = data_dir / "hsv_current.json"
+    with open(current_file, 'w') as f:
         json.dump(data, f, indent=2)
-    print(f"\nData saved to {filepath}")
+    
+    # also save timestamped backup
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = data_dir / f"hsu_usage_{timestamp}.json"
+    with open(backup_file, 'w') as f:
+        json.dump(data, f, indent=2)
+    
+    print(f"\ndata saved to {current_file}")
+    print(f"backup saved to {backup_file}")
 
 def print_summary(data):
     print("\n" + "="*60)
-    print("HSV UTILITIES DATA SUMMARY")
+    print("hsv utilities data summary")
     print("="*60)
     for industry, meters in data.items():
         print(f"\n{industry}:")
         if not meters:
-            print("  No data")
+            print("  no data")
             continue
         for meter in meters:
             total_usage = sum(r.get("usage", 0) for r in meter.get("readings", []))
             unit = meter.get("unitOfMeasure", "UNKNOWN")
             readings_count = meter.get("totalReadings", 0)
-            print(f"  Meter {meter['meterNumber']}: {readings_count} readings, {total_usage:.2f} {unit}")
+            print(f"  meter {meter['meterNumber']}: {readings_count} readings, {total_usage:.2f} {unit}")
             
             if readings_count > 0 and meter["readings"][0].get("datetime"):
                 first = meter["readings"][0]["datetime"]
                 last = meter["readings"][-1]["datetime"]
                 if isinstance(first, str) and len(first) > 10:
-                    print(f"    Date range: {first[:10]} to {last[:10]}")
+                    print(f"    date range: {first[:10]} to {last[:10]}")
 
 def main():
     print("="*60)
-    print("HSV UTILITIES DATA SCRAPER")
+    print("hsv utilities data scraper")
     print("="*60)
     
     session = create_session()
+    if not session:
+        print("\nauthentication failed")
+        return
+    
     account_number, service_location = get_account_info(session)
     
-    # Check data availability
-    print()
-    availability = check_hsv_availability(session, account_number, service_location)
+    # date range
+    end_date = datetime.now()
     
-    # Determine date range
     if DATA_PERIOD_DAYS < 0:
-        # Fetch all available historical data
-        print(f"\n📅 Fetching ALL available historical data")
-        start_date = availability['data_start_date']
-        end_date = datetime.now()
-        print(f"   From: {start_date.date()}")
-        print(f"   To: {end_date.date()}")
-        print(f"   Total days: {availability['total_days_available']}")
+        actual_start, days_available = check_data_availability(session, account_number, service_location)
+        start_date = actual_start
+        print(f"\nfetching all available data ({days_available} days)")
     else:
-        # Fetch specified number of days
-        print(f"\n📅 Fetching last {DATA_PERIOD_DAYS} days")
-        end_date = datetime.now()
+        print(f"\nfetching last {DATA_PERIOD_DAYS} days")
         start_date = end_date - timedelta(days=DATA_PERIOD_DAYS)
-        # Don't go before data start date
-        if start_date < availability['data_start_date']:
-            print(f"   ⚠ Requested {DATA_PERIOD_DAYS} days, but only {availability['total_days_available']} available")
-            start_date = availability['data_start_date']
-        print(f"   From: {start_date.date()}")
-        print(f"   To: {end_date.date()}")
+    
+    print(f"from: {start_date.date()}")
+    print(f"to: {end_date.date()}")
     
     all_data = {}
     
-    # Configure intervals for each utility
+    # configure intervals
     intervals = {
         "ELECTRIC": convert_interval(ELECTRIC_INTERVAL), 
         "GAS": convert_interval(GAS_INTERVAL),
         "WATER": convert_interval(WATER_INTERVAL)
     }
     
-    # HSV can handle large requests (up to 360 days)
-    # So we can request all utilities together if within limits
     days_to_fetch = (end_date - start_date).days
-    max_chunk_size = availability['max_days_per_request']
+    max_chunk_size = 360
     
     if days_to_fetch <= max_chunk_size:
-        # Single request for each utility
-        print(f"\nFetching all utilities (within {max_chunk_size} day limit)...")
+        print(f"\nfetching utilities...")
         for industry, interval in intervals.items():
-            print(f"\n{industry} ({interval}):")
+            print(f"  {industry} ({interval})", end="", flush=True)
             data = get_usage_data(
                 session, account_number, service_location,
                 start_date, end_date, interval, industries=[industry]
             )
             if data and industry in data:
                 all_data[industry] = data[industry]
-                print(f"  ✓ Retrieved {len(data[industry])} meters")
+                total_readings = sum(m.get("totalReadings", 0) for m in data[industry])
+                print(f" - {total_readings} readings")
     else:
-        # Need to chunk requests
-        print(f"\nFetching in chunks (need {days_to_fetch} days, max is {max_chunk_size})...")
+        print(f"\nfetching in chunks...")
+        total_chunks = (days_to_fetch // max_chunk_size) + 1
         
         for industry, interval in intervals.items():
             print(f"\n{industry} ({interval}):")
@@ -267,12 +328,11 @@ def main():
             
             current_end = end_date
             chunk_num = 1
-            total_chunks = (days_to_fetch // max_chunk_size) + 1
             
             while current_end > start_date:
                 current_start = max(current_end - timedelta(days=max_chunk_size - 1), start_date)
                 
-                print(f"  [Chunk {chunk_num}/{total_chunks}] {current_start.date()} to {current_end.date()}")
+                print(f"  chunk {chunk_num}/{total_chunks}: {current_start.date()} to {current_end.date()}", end="", flush=True)
                 
                 chunk_data = get_usage_data(
                     session, account_number, service_location,
@@ -280,30 +340,30 @@ def main():
                 )
                 
                 if chunk_data and industry in chunk_data:
-                    # Merge readings for each meter
                     for meter in chunk_data[industry]:
                         existing_meter = next(
                             (m for m in industry_data if m["meterNumber"] == meter["meterNumber"]), 
                             None
                         )
                         if existing_meter:
-                            # Prepend older readings
                             existing_meter["readings"] = meter["readings"] + existing_meter["readings"]
                             existing_meter["totalReadings"] = len(existing_meter["readings"])
                         else:
                             industry_data.append(meter)
+                    
+                    readings_count = sum(m.get("totalReadings", 0) for m in chunk_data[industry])
+                    print(f" - {readings_count} readings")
                 
                 current_end = current_start - timedelta(days=1)
                 chunk_num += 1
-                time.sleep(1)
+                time.sleep(0.5)
             
             if industry_data:
                 all_data[industry] = industry_data
-                print(f"  ✓ Total: {len(industry_data)} meters")
     
     print_summary(all_data)
     save_data(all_data)
-    print("\n✓ HSV data collection complete")
+    print("\ncollection complete")
 
 if __name__ == "__main__":
     main()
