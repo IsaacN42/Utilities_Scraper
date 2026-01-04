@@ -1,8 +1,14 @@
 .env
 .venv/
+__pycache__*
 
+data/bills/*
 data/logs/*
 data/plots/*
 data/reports/*
 data/ecobee/*
 data/utilities/*
+
+ecobee_session.json
+ecobee_token.json
+hsv_token.json
