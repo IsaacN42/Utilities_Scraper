@@ -1,161 +1,357 @@
-# Utilities_Scraper Energy Monitoring System
+# Utilities Scraper
 
-Automated energy data collection & analysis for HSV Utilities and Ecobee thermostats—complete with insights, usage statistics, and Home Assistant integration.
+Automated energy data collection for HSV Utilities and Ecobee thermostats with Home Assistant integration.
 
 ---
 
 ## Features
 
-- Collect electric, gas, and water usage data from HSV Utilities
-- Retrieve and analyze HVAC data from Ecobee thermostats
-- Output insights, efficiency recommendations, and cost calculations
-- Push results/alerts to Home Assistant for notification and dashboarding
-- Create system status plots and reports
-- Flexible CLI and automation via cron/systemd
+- **HSV Utilities Data Collection**
+  - Electric, gas, and water usage
+  - Historical data retrieval
+  - Incremental updates every 15 minutes
+  - Automatic bill PDF downloads
+
+- **Ecobee Thermostat Data**
+  - HVAC runtime and temperature data
+  - Indoor/outdoor conditions
+  - Equipment usage tracking
+  - 5-minute interval data
+
+- **Home Assistant Integration**
+  - Real-time usage sensors
+  - Automated data collection
+  - Dashboard-ready metrics
+  - Cost tracking and alerts
 
 ---
 
 ## Requirements
 
 - Python 3.8+
-- Access to your HSV Utilities and Ecobee accounts
-- (Optional) A running [Home Assistant](https://www.home-assistant.io/) instance with API access
+- Home Assistant instance
+- HSV Utilities account
+- Ecobee account with authenticator app (Microsoft Authenticator recommended)
 
 ---
 
 ## Quick Start
 
-1. **Clone the repo**
-   ```sh
-   git clone <your-repo-url>
-   cd Utilities_Scraper
-   ```
+### 1. Install Dependencies
 
-2. **Install dependencies**
-   ```sh
-   pip install -r requirements.txt
-   ```
-   Or, run the setup script for one-time initialization:
-   ```sh
-   python3 setup.py
-   ```
-
-3. **Create your `.env` file**
-   - Copy the sample:
-     ```sh
-     cp env.example .env
-     ```
-   - Fill in all necessary account credentials and customize settings as desired.  
-   - **See the comments in `env.example` for every variable, valid choices (intervals, alert thresholds, etc), and what they control.**
-
-4. **Initial data collection**
-   ```sh
-   python3 utilities_scraper/scrapers/hsv_scraper.py
-   python3 utilities_scraper/scrapers/ecobee_scraper.py
-   ```
-
-5. **Run an analysis**
-   ```sh
-   python3 energy_analyzer.py
-   ```
-
-6. **Review reports and plots**
-   - Reports are saved in `/reports`
-   - Visualizations appear in `/plots`
-
----
-
-## Environment Configuration
-
-Settings are managed using your `.env` file.  
-Variables control:
-- Account logins for data scraping
-- Collection intervals (e.g., HOURLY, DAILY, MONTHLY: see `env.example`)
-- Data analysis window (set `DATA_PERIOD_DAYS=-1` for all available data)
-- Home Assistant integration (API URL, access token)
-- Feature toggles and thresholds for notifications & alerts
-
-**See `env.example` for full documentation of each variable and valid choices.**
-
----
-
-## CLI Usage
-
-Manage all tasks via the command line:
-
-```sh
-python3 utilities_scraper/main.py collect        # Collect both HSV & Ecobee data
-python3 utilities_scraper/main.py analyze        # Run analysis and output results
-python3 utilities_scraper/main.py status         # Check data, report, and integration status
-python3 utilities_scraper/main.py stats          # Quick stats from latest data
-python3 utilities_scraper/main.py cleanup        # Remove files older than N days (default: 30)
-python3 utilities_scraper/main.py full-run       # Collect + analyze in one step
+```bash
+pip install -r requirements.txt
+playwright install chromium  # Required for Ecobee login
 ```
-Additional flags:
-- `--weekly` : Run/create a weekly report (for `analyze` and `full-run`)
-- `--no-ha`  : Run without Home Assistant integration
-- `--cleanup-days <n>` : Custom age (days) for cleanup
+
+### 2. Configure Environment
+
+Copy the example file and add your credentials:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your account details:
+
+```bash
+# HSV Utilities
+HSV_USERNAME=your_email@example.com
+HSV_PASSWORD=your_password
+
+# Ecobee
+ECOBEE_USERNAME=your_email@example.com
+ECOBEE_PASSWORD=your_password
+ECOBEE_TOTP_SECRET=YOUR_AUTHENTICATOR_SECRET
+
+# Data collection
+DATA_PERIOD_DAYS=-1  # -1 for all available data, or number of days
+STORE_INTERVAL_MINUTES=15
+
+# Intervals
+ELECTRIC_INTERVAL=HOURLY  # Options: HOURLY, DAILY, MONTHLY, 15_MIN
+GAS_INTERVAL=HOURLY
+WATER_INTERVAL=MONTHLY
+```
+
+**Getting your Ecobee TOTP secret:**
+1. Go to Ecobee security settings
+2. Enable authenticator app 2FA
+3. Click "Can't scan QR code?"
+4. Copy the secret key shown
+5. Add to both Microsoft Authenticator and your `.env` file
+
+### 3. Initial Data Collection
+
+Run the full scrapers once to get historical data:
+
+```bash
+# Set DATA_PERIOD_DAYS=-1 in .env first
+python utilities_scraper/scrapers/ecobee_scraper_v2.py
+python utilities_scraper/scrapers/hsv_scraper_v2.py
+```
+
+This creates:
+- `data/ecobee/ecobee_current.json` - Main data file
+- `data/utilities/hsv_current.json` - Main data file
+- Timestamped backups in the same directories
+
+### 4. Set Up Incremental Updates
+
+The incremental scrapers append new data every 15 minutes:
+
+```bash
+python utilities_scraper/scrapers/ecobee_scraper_incremental.py
+python utilities_scraper/scrapers/hsv_scraper_incremental.py
+```
 
 ---
 
-## Automation & Integration
+## Home Assistant Integration
 
-- **Automate collection/analysis with cron or systemd:**  
-  Templates (`cron_template.txt` and `energy-monitoring.service/timer`) are provided—edit with your executable/python path and file locations.
+### Shell Commands
 
-- **Home Assistant Integration:**  
-  - Use the `home_assistant_config.yaml` provided in this repo to define sensors, automations, scripts, and dashboard cards.
-  - Add it (or merge into) your HA `configuration.yaml`.
-  - Notifications will go to your Home Assistant mobile app by default, but you can change the `notify` target to any HA-supported method (see [Home Assistant Notifications](https://www.home-assistant.io/integrations/notify/)).
+Add to your `configuration.yaml`:
+
+```yaml
+shell_command:
+  ecobee_update: "python /path/to/Utilities_Scraper/utilities_scraper/scrapers/ecobee_scraper_incremental.py"
+  hsv_update: "python /path/to/Utilities_Scraper/utilities_scraper/scrapers/hsv_scraper_incremental.py"
+  hsv_bills: "python /path/to/Utilities_Scraper/utilities_scraper/scrapers/hsv_bill_scraper.py"
+```
+
+### Automations
+
+Add automated data collection:
+
+```yaml
+automation:
+  - alias: "Ecobee Data Collection"
+    trigger:
+      - platform: time_pattern
+        minutes: "/15"
+    action:
+      - service: shell_command.ecobee_update
+
+  - alias: "HSV Utilities Data Collection"
+    trigger:
+      - platform: time_pattern
+        minutes: "/15"
+    action:
+      - service: shell_command.hsv_update
+  
+  - alias: "HSV Bill Download"
+    trigger:
+      - platform: time
+        at: "03:00:00"  # Daily at 3am
+    action:
+      - service: shell_command.hsv_bills
+```
+
+### Sensors
+
+Create template sensors to expose the data:
+
+```yaml
+sensor:
+  - platform: command_line
+    name: "Electric Usage"
+    command: "python /path/to/read_usage.py electric"
+    unit_of_measurement: "kWh"
+    scan_interval: 900  # 15 minutes
+  
+  - platform: command_line
+    name: "Gas Usage"
+    command: "python /path/to/read_usage.py gas"
+    unit_of_measurement: "CCF"
+    scan_interval: 900
+```
+
+---
+
+## File Structure
+
+```
+Utilities_Scraper/
+├── .env                          # Your credentials (gitignored)
+├── .env.example                  # Template
+├── requirements.txt
+├── .gitignore
+└── utilities_scraper/
+    └── scrapers/
+        ├── ecobee_scraper_v2.py           # Full historical pull
+        ├── ecobee_scraper_incremental.py  # Append new data
+        ├── hsv_scraper_v2.py              # Full historical pull
+        ├── hsv_scraper_incremental.py     # Append new data
+        └── hsv_bill_scraper.py            # Download bill PDFs
+
+Data files (gitignored):
+├── data/
+│   ├── ecobee/
+│   │   ├── ecobee_current.json           # Incrementally updated
+│   │   └── ecobee_data_*.json            # Timestamped backups
+│   ├── utilities/
+│   │   ├── hsv_current.json              # Incrementally updated
+│   │   └── hsu_usage_*.json              # Timestamped backups
+│   └── bills/
+│       ├── billing_history_current.json
+│       └── *.pdf                         # Bill PDFs
+
+Token files (gitignored):
+├── ecobee_session.json           # Playwright browser session
+├── ecobee_token.json             # API access token
+└── hsv_token.json                # API access token
+```
+
+---
+
+## How It Works
+
+### Token Caching
+Both scrapers cache authentication tokens to avoid unnecessary logins:
+- **Ecobee**: Token valid for 1 hour, browser session valid for weeks
+- **HSV**: Token valid until expiration timestamp
+
+On first run, scrapers will authenticate. Subsequent runs reuse cached tokens until they expire.
+
+### Data Collection Strategy
+
+**Full Scrapers (v2):**
+- Set `DATA_PERIOD_DAYS=-1` to fetch all available history
+- Auto-detects how far back data exists
+- Saves to `*_current.json` + timestamped backup
+- Use once initially, then switch to incremental
+
+**Incremental Scrapers:**
+- Load existing `*_current.json`
+- Find last timestamp in data
+- Fetch from last timestamp - 1 day (for overlap)
+- Deduplicate by timestamp
+- Append only new readings
+- Overwrite `*_current.json`
+- Run every 15 minutes via Home Assistant
+
+### Bill Scraper
+- Downloads all available HSV utility bill PDFs
+- Skips already-downloaded files
+- Saves billing history JSON
+- Run monthly or as needed
+
+---
+
+## Environment Variables
+
+### Required
+```bash
+HSV_USERNAME              # HSV Utilities email
+HSV_PASSWORD              # HSV Utilities password
+ECOBEE_USERNAME           # Ecobee account email
+ECOBEE_PASSWORD           # Ecobee account password
+ECOBEE_TOTP_SECRET        # Authenticator app secret key
+```
+
+### Optional
+```bash
+DATA_PERIOD_DAYS=-1                 # -1 for all data, or number of days (default: 7)
+STORE_INTERVAL_MINUTES=15           # Ecobee reading interval (default: 15)
+ELECTRIC_INTERVAL=HOURLY            # Options: HOURLY, DAILY, MONTHLY, 15_MIN
+GAS_INTERVAL=HOURLY                 # Options: HOURLY, DAILY, MONTHLY
+WATER_INTERVAL=MONTHLY              # Options: MONTHLY (HSV limitation)
+```
 
 ---
 
 ## Troubleshooting
 
-- Double-check `.env` formatting and values if data collection or analysis fails.
-- See logs and error messages printed to terminal, and check `/logs` or the reports for diagnostic info.
-- For API changes or authentication errors, re-generate your tokens or update your credentials.
+**Ecobee login fails:**
+- Verify TOTP secret is correct
+- Check username/password
+- Ensure Microsoft Authenticator shows same codes
+- Delete `ecobee_session.json` and `ecobee_token.json` to force fresh login
+
+**HSV login fails:**
+- Verify credentials in `.env`
+- Check for special characters in password (they're automatically URL-encoded)
+- Delete `hsv_token.json` to force fresh login
+
+**No data collected:**
+- Check file permissions on `data/` directory
+- Verify Python can write to the directory
+- Look for error messages in script output
+
+**Incremental scraper not adding data:**
+- Verify `*_current.json` exists (run full scraper first)
+- Check that enough time has passed for new data (15+ minutes)
+- Look at timestamps in the JSON to verify data is recent
 
 ---
 
-## FAQ
+## Data Format
 
-**Q: What do "notifications" do? Where do they go?**  
-A: Home Assistant automations will send push notifications to your mobile phone (if you use the Home Assistant companion app). Configure the target in the `home_assistant_config.yaml` `notify` service.
-
-**Q: How do I customize what “period” my data covers?**  
-A: Set `DATA_PERIOD_DAYS` in your `.env`. Use `-1` for all data, or an integer for a specific window.
-
-**Q: Can I change how often scrapers pull data?**  
-A: Yes! Edit `ELECTRIC_INTERVAL`, `GAS_INTERVAL`, and `WATER_INTERVAL` in your `.env`. Valid values are documented in `env.example`.
-
----
-
-## Project Layout
-
+### Ecobee Data Structure
+```json
+{
+  "THERMOSTAT": [{
+    "thermostatId": "421824700251",
+    "totalReadings": 16316,
+    "readings": [{
+      "timestamp": 1735257600000,
+      "datetime": "2024-12-27T00:00:00",
+      "data": {
+        "zoneAveTemp": "720",
+        "outdoorTemp": "450",
+        "hvacMode": "heat",
+        ...
+      }
+    }]
+  }]
+}
 ```
-Utilities_Scraper/
-  ├── README.md
-  ├── env.example
-  ├── requirements.txt
-  ├── setup.py
-  ├── main.py
-  ├── energy_analyzer.py
-  └── utilities_scraper/
-      ├── main.py
-      ├── energy_analyzer.py
-      ├── energy_cli.py
-      └── scrapers/
-          ├── hsv_scraper.py
-          └── ecobee_scraper.py
-  ├── cron_template.txt
-  ├── energy-monitoring.service, .timer
-  ├── home_assistant_config.yaml
-  ├── data/
-  ├── logs/
-  ├── plots/
-  ├── reports/
+
+### HSV Data Structure
+```json
+{
+  "ELECTRIC": [{
+    "meterNumber": "123456789",
+    "unitOfMeasure": "KWH",
+    "totalReadings": 8640,
+    "readings": [{
+      "timestamp": 1735257600000,
+      "datetime": "2024-12-27T00:00:00",
+      "usage": 1.25
+    }]
+  }],
+  "GAS": [...],
+  "WATER": [...]
+}
 ```
+
 ---
 
-Let me know if you want further improvements or specific code blocks/examples shown inline!
+## Advanced Usage
+
+### Manual Data Collection
+Run scrapers manually anytime:
+```bash
+# Get new data
+python utilities_scraper/scrapers/ecobee_scraper_incremental.py
+python utilities_scraper/scrapers/hsv_scraper_incremental.py
+
+# Download bills
+python utilities_scraper/scrapers/hsv_bill_scraper.py
+```
+
+### Rebuild From Scratch
+To start over with fresh data:
+```bash
+# Delete existing data
+rm data/ecobee/ecobee_current.json
+rm data/utilities/hsv_current.json
+
+# Delete tokens to force reauth
+rm ecobee_token.json ecobee_session.json hsv_token.json
+
+# Run full pull
+python utilities_scraper/scrapers/ecobee_scraper_v2.py
+python utilities_scraper/scrapers/hsv_scraper_v2.py
+```
