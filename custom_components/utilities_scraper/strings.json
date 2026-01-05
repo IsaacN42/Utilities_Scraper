@@ -1,0 +1,15 @@
+{
+  "title": "Utilities Scraper",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Credentials",
+        "description": "Enter credentials for HSV Utilities and Ecobee."
+      },
+      "actions": {
+        "title": "Actions",
+        "description": "Run tests and finish setup."
+      }
+    }
+  }
+}

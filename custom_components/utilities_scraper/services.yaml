@@ -1,0 +1,3 @@
+refresh_now:
+  name: Refresh now
+  description: Trigger an immediate refresh for Utilities Scraper.

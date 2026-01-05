@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Credentials",
+        "description": "Enter credentials for HSV Utilities and Ecobee.",
+        "data": {
+          "hsv_username": "HSV username/email",
+          "hsv_password": "HSV password",
+          "ecobee_username": "Ecobee username/email",
+          "ecobee_2fa_code": "Ecobee 2FA code",
+          "ecobee_password": "Ecobee password"
+        }
+      }
+    }
+  }
+}
